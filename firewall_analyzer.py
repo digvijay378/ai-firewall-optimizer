@@ -123,6 +123,7 @@ class FirewallAnalyzer:
     def print_summary(self, analysis: Dict):
         console.rule("[bold red]Firewall Policy Analysis Summary")
         console.print(f"Total rules analyzed: [bold]{analysis['total_rules']}[/bold]")
+        console.print("[dim]Tip: pipe to --format json for automation pipelines[/dim]")
 
         if analysis["high_risk"]:
             table = Table(title="High Risk Rules (Score > 70)")
