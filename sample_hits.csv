@@ -1,0 +1,11 @@
+name,hits_30d,hits_90d
+Allow-Web-Internal,8920,12480
+Allow-All-Internal,0,0
+Old-Admin-Access,3,12
+Finance-DB-Access,410,892
+Legacy-VPN-Access,0,0
+Web-Proxy-Egress,28910,45230
+Block-Bad-IPs,1240,9834
+Management-SSH,89,145
+Any-Any-Test-Rule,0,0
+App1-to-App2,1870,3201

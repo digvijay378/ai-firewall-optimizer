@@ -2,80 +2,108 @@
 """
 AI Firewall Policy Optimizer - CLI
 
+A practical tool for cleaning up large NGFW rulebases.
+
 Usage examples:
-  python main.py --rules sample_rules.csv --output report.md
-  python main.py --rules rules.csv --hits hits.csv --format json
+  python main.py --rules sample_rules.csv --hits sample_hits.csv --output report.md
+  python main.py --rules rules.csv --min-risk 80 --format json
 """
 
 import click
 import pandas as pd
 from pathlib import Path
 from rich.console import Console
-from firewall_analyzer import FirewallAnalyzer, load_rules_from_csv, Rule
+from firewall_analyzer import FirewallAnalyzer, load_rules_from_csv, load_hits_from_csv
 
 console = Console()
 
+
 @click.command()
-@click.option("--rules", required=True, type=click.Path(exists=True), help="CSV file with firewall rules")
-@click.option("--hits", default=None, type=click.Path(exists=True), help="Optional CSV with hit counts")
-@click.option("--output", default="policy_report.md", help="Output file (md or json)")
+@click.option("--rules", required=True, type=click.Path(exists=True), help="CSV with firewall rules")
+@click.option("--hits", default=None, type=click.Path(exists=True), help="Optional separate hits CSV")
+@click.option("--min-risk", default=70, type=int, help="Minimum risk score to flag (0-100)")
+@click.option("--output", default="policy_report.md", help="Output filename")
 @click.option("--format", "fmt", default="md", type=click.Choice(["md", "json"]), help="Output format")
-def analyze(rules, hits, output, fmt):
-    console.print("[bold blue]Loading rules...[/bold blue]")
+@click.option("--show-all", is_flag=True, help="Show all high risk rules (no limit)")
+def analyze(rules, hits, min_risk, output, fmt, show_all):
+    """Analyze firewall rules for risk, shadowing, redundancy, and bloat."""
+    console.print("[bold blue]Loading firewall rules...[/bold blue]")
     rule_list = load_rules_from_csv(rules)
 
-    # Merge hit counts if provided
     if hits:
-        hits_df = pd.read_csv(hits)
-        hit_map = dict(zip(hits_df.iloc[:,0].astype(str), hits_df.iloc[:,1].astype(int)))
+        console.print("[dim]Merging hit counts from separate file...[/dim]")
+        hit_map = load_hits_from_csv(hits)
         for r in rule_list:
             if r.name in hit_map:
                 r.hit_count = hit_map[r.name]
 
     analyzer = FirewallAnalyzer(rule_list)
-    result = analyzer.analyze()
+    result = analyzer.analyze(min_risk=min_risk)
+
+    limit = None if show_all else 15
 
     if fmt == "json":
         import json
         data = {
             "summary": {
-                "total": result["total_rules"],
+                "total_rules": result["total_rules"],
                 "high_risk_count": len(result["high_risk"]),
                 "shadowed_count": len(result["shadowed"]),
+                "redundant_count": len(result["redundant"]),
+                "unused_count": len(result["unused"]),
             },
-            "high_risk": [r.name for r in result["high_risk"]],
+            "high_risk": [
+                {
+                    "name": r.name,
+                    "risk_score": r.risk_score(),
+                    "source": r.source,
+                    "destination": r.destination,
+                    "service": r.service,
+                    "hit_count": r.hit_count,
+                }
+                for r in result["high_risk"][:limit]
+            ],
             "shadowed": result["shadowed"],
+            "recommendations": result["recommendations"],
         }
         Path(output).write_text(json.dumps(data, indent=2))
-        console.print(f"[green]JSON report written to {output}[/green]")
+        console.print(f"[green]JSON report saved to {output}[/green]")
     else:
         analyzer.print_summary(result)
-        # Write a simple markdown report
-        md = generate_markdown_report(result)
+        md = generate_markdown_report(result, limit=limit)
         Path(output).write_text(md)
-        console.print(f"\n[green]Markdown report written to {output}[/green]")
+        console.print(f"\n[green]Markdown report saved to {output}[/green]")
 
-def generate_markdown_report(result: dict) -> str:
+
+def generate_markdown_report(result: dict, limit: int | None = 15) -> str:
     lines = ["# Firewall Policy Optimization Report\n"]
     lines.append(f"**Total rules analyzed:** {result['total_rules']}\n")
 
     if result["high_risk"]:
         lines.append("## High Risk Rules\n")
-        lines.append("| Rule | Risk Score | Notes |")
-        lines.append("|------|------------|-------|")
-        for r in result["high_risk"]:
-            notes = []
-            if r.is_any_any(): notes.append("any/any")
-            if r.hit_count == 0: notes.append("0 hits")
-            lines.append(f"| {r.name} | {r.risk_score()} | {', '.join(notes)} |")
+        lines.append("| Rule | Risk | Source → Dest | Service | Hits | Issues |")
+        lines.append("|------|------|---------------|---------|------|--------|")
+        for r in result["high_risk"][:limit or len(result["high_risk"])]:
+            issues = []
+            if r.is_any_any(): issues.append("any/any")
+            if r.hit_count == 0: issues.append("0 hits")
+            if r.log.lower() not in ("yes", "log"): issues.append("no log")
+            src_dst = f"{r.source} → {r.destination}"
+            lines.append(f"| `{r.name}` | {r.risk_score()} | {src_dst} | {r.service} | {r.hit_count} | {', '.join(issues)} |")
 
     if result["shadowed"]:
-        lines.append("\n## Shadowed Rules\n")
+        lines.append("\n## Shadowed Rules (will never match)\n")
         for s in result["shadowed"]:
-            lines.append(f"- `{s['shadowed_rule']}` is shadowed by `{s['by_rule']}`")
+            lines.append(f"- `{s['shadowed_rule']}` is completely shadowed by `{s['by_rule']}`")
 
-    lines.append("\n> Generated by AI Firewall Policy Optimizer\n")
+    if result["recommendations"]:
+        lines.append("\n## Recommendations\n")
+        for rec in result["recommendations"]:
+            lines.append(f"- {rec}")
+
+    lines.append("\n---\n*Generated by [AI Firewall Policy Optimizer](https://github.com/digvijay378/ai-firewall-optimizer)*")
     return "\n".join(lines)
+
 
 if __name__ == "__main__":
     analyze()
