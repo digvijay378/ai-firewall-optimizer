@@ -1,0 +1,11 @@
+name,source,destination,service,action,log,hit_count
+Allow-Web-Internal,10.10.0.0/16,web-servers,https,allow,yes,12480
+Allow-All-Internal,any,any,any,allow,no,0
+Old-Admin-Access,10.0.0.0/8,mgmt-servers,ssh,allow,yes,12
+Finance-DB-Access,finance-vlan,db-tier,mysql,allow,yes,892
+Legacy-VPN-Access,remote-vpn,internal,any,allow,no,0
+Web-Proxy-Egress,internal,proxy-servers,http;https,allow,yes,45230
+Block-Bad-IPs,bad-ips,any,any,deny,yes,9834
+Management-SSH,mgmt-subnet,firewalls,ssh,allow,yes,145
+Any-Any-Test-Rule,any,any,any,allow,no,0
+App1-to-App2,app1-zone,app2-zone,app1-api,allow,yes,3201
