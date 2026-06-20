@@ -106,6 +106,16 @@ class FirewallAnalyzer:
         """Rules with zero hits that are allows."""
         return [r for r in self.rules if r.hit_count == 0 and r.action.lower() == "allow"]
 
+    def get_risk_distribution(self) -> Dict[str, int]:
+        dist = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        for r in self.rules:
+            score = r.risk_score()
+            if score >= 80: dist["critical"] += 1
+            elif score >= 70: dist["high"] += 1
+            elif score >= 40: dist["medium"] += 1
+            else: dist["low"] += 1
+        return dist
+
     def analyze(self, min_risk: int = 70) -> Dict:
         shadowed = self.find_shadowed_rules()
         redundant = self.find_redundant()
@@ -115,8 +125,9 @@ class FirewallAnalyzer:
             reverse=True
         )
         unused = self.find_unused()
+        distribution = self.get_risk_distribution()
 
-        recommendations = self._generate_recommendations(high_risk, shadowed)
+        recommendations = self._generate_recommendations(high_risk, shadowed, distribution)
 
         return {
             "total_rules": len(self.rules),
@@ -124,36 +135,41 @@ class FirewallAnalyzer:
             "redundant": redundant,
             "high_risk": high_risk,
             "unused": unused,
+            "risk_distribution": distribution,
             "recommendations": recommendations,
         }
 
-    def _generate_recommendations(self, high_risk: List[Rule], shadowed: List[Dict]) -> List[str]:
+    def _generate_recommendations(self, high_risk: List[Rule], shadowed: List[Dict], dist: Dict) -> List[str]:
         recs = []
         if high_risk:
-            recs.append(f"Review and tighten the {len(high_risk)} highest-risk rules first.")
+            recs.append(f"Prioritize review of {len(high_risk)} high/critical risk rules.")
         if shadowed:
-            recs.append(f"Remove or reorder {len(shadowed)} shadowed rules that will never match.")
+            recs.append(f"Clean up {len(shadowed)} shadowed rules that provide no value.")
+        if dist["critical"] > 5:
+            recs.append("Multiple critical rules detected — consider a full rulebase audit.")
         if any(r.hit_count == 0 for r in high_risk):
-            recs.append("Consider deleting or disabling rules with zero hits in the last 90 days.")
+            recs.append("Several high-risk rules have zero observed hits — validate if still needed.")
         return recs
 
     def print_summary(self, analysis: Dict):
         console.rule("[bold red]Firewall Policy Analysis Summary")
         console.print(f"Total rules analyzed: [bold]{analysis['total_rules']}[/bold]")
+        dist = analysis.get("risk_distribution", {})
+        console.print(f"Risk breakdown: Critical={dist.get('critical',0)} | High={dist.get('high',0)} | Medium={dist.get('medium',0)} | Low={dist.get('low',0)}")
         console.print("[dim]Tip: use --format json for automation / ticketing systems[/dim]")
 
         if analysis["high_risk"]:
-            table = Table(title=f"High Risk Rules (Score ≥ 70) — Top {min(10, len(analysis['high_risk']))}")
+            table = Table(title=f"High Risk Rules (Score ≥ 70) — showing up to 15")
             table.add_column("Rule", style="cyan")
             table.add_column("Risk", style="red")
             table.add_column("Issues", style="yellow")
-            for r in analysis["high_risk"][:10]:
+            for r in analysis["high_risk"][:15]:
                 issues = []
                 if r.is_any_any(): issues.append("any/any")
                 if r.is_permissive(): issues.append("overly broad")
                 if r.hit_count == 0: issues.append("0 hits")
                 if r.log.lower() not in ("yes", "log"): issues.append("no logging")
-                table.add_row(r.name, str(r.risk_score()), ", ".join(issues) or "review manually")
+                table.add_row(r.name, str(r.risk_score()), ", ".join(issues) or "manual review")
             console.print(table)
 
         if analysis["shadowed"]:
